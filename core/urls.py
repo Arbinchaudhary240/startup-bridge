@@ -11,22 +11,16 @@ from .views import (
     MyProfileView,
     StartupViewSet,
     ConnectionRequestViewSet,
-    OfferViewSet,
-    ProjectViewSet,
-    MilestoneDetailView,
 )
 
 router = DefaultRouter()
 router.register("startups", StartupViewSet, basename="startup")
 router.register("connections", ConnectionRequestViewSet, basename="connection")
-router.register("offers", OfferViewSet, basename="offer")
-router.register("projects", ProjectViewSet, basename="project")
 
 urlpatterns = [
     path("auth/register/", RegisterView.as_view(), name="register"),
     path("auth/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("profile/me/", MyProfileView.as_view(), name="my-profile"),
-    path("milestones/<int:pk>/", MilestoneDetailView.as_view(), name="milestone-detail"),
     path("", include(router.urls)),
 ]

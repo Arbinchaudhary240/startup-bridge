@@ -7,9 +7,7 @@ from .models import (
     Profile,
     Startup,
     ConnectionRequest,
-    Offer,
-    Project,
-    Milestone,
+    ConnectionMessage,
 )
 
 
@@ -120,19 +118,14 @@ class StartupAdmin(admin.ModelAdmin):
     list_display = (
         "title",
         "founder",
-        "category",
         "stage",
         "status",
-        "budget_amount",
-        "currency",
         "created_at",
     )
 
     list_filter = (
         "status",
         "stage",
-        "category",
-        "currency",
     )
 
     search_fields = (
@@ -157,6 +150,7 @@ class ConnectionRequestAdmin(admin.ModelAdmin):
     list_display = (
         "startup",
         "requester",
+        "interests",
         "status",
         "created_at",
     )
@@ -182,98 +176,9 @@ class ConnectionRequestAdmin(admin.ModelAdmin):
     ordering = ("-created_at",)
 
 
-@admin.register(Offer)
-class OfferAdmin(admin.ModelAdmin):
-    list_display = (
-        "startup",
-        "contributor",
-        "contribution_type",
-        "funding_type",
-        "amount",
-        "currency",
-        "status",
-        "created_at",
-    )
-
-    list_filter = (
-        "contribution_type",
-        "funding_type",
-        "status",
-        "currency",
-    )
-
-    search_fields = (
-        "startup__title",
-        "contributor__username",
-        "contributor__full_name",
-        "terms",
-    )
-
-    readonly_fields = (
-        "id",
-        "created_at",
-        "updated_at",
-    )
-
+@admin.register(ConnectionMessage)
+class ConnectionMessageAdmin(admin.ModelAdmin):
+    list_display = ("connection", "sender", "created_at")
+    search_fields = ("connection__startup__title", "sender__username", "body")
+    readonly_fields = ("id", "created_at")
     ordering = ("-created_at",)
-
-
-@admin.register(Project)
-class ProjectAdmin(admin.ModelAdmin):
-    list_display = (
-        "startup",
-        "founder",
-        "contributor",
-        "status",
-        "start_date",
-        "created_at",
-    )
-
-    list_filter = (
-        "status",
-        "start_date",
-    )
-
-    search_fields = (
-        "startup__title",
-        "founder__username",
-        "founder__full_name",
-        "contributor__username",
-        "contributor__full_name",
-    )
-
-    readonly_fields = (
-        "id",
-        "created_at",
-    )
-
-    ordering = ("-created_at",)
-
-
-@admin.register(Milestone)
-class MilestoneAdmin(admin.ModelAdmin):
-    list_display = (
-        "title",
-        "project",
-        "status",
-        "due_date",
-        "created_at",
-    )
-
-    list_filter = (
-        "status",
-        "due_date",
-    )
-
-    search_fields = (
-        "title",
-        "description",
-        "project__startup__title",
-    )
-
-    readonly_fields = (
-        "id",
-        "created_at",
-    )
-
-    ordering = ("due_date", "created_at")

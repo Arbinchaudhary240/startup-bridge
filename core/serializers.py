@@ -4,23 +4,14 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from rest_framework import serializers
 
-from .models import Profile
-
-User = get_user_model()
-
 from .models import (
     Profile,
     Startup,
     ConnectionRequest,
-    Offer,
-    Project,
-    Milestone,
+    ConnectionMessage,
 )
 
 User = get_user_model()
-
-
-
 
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(
@@ -161,16 +152,43 @@ class ProfileSerializer(serializers.ModelSerializer):
 
 
 class StartupSerializer(serializers.ModelSerializer):
+    problem = serializers.CharField(max_length=5000)
+    solution = serializers.CharField(max_length=5000)
     founder_username = serializers.CharField(
         source="founder.username", read_only=True
     )
+    looking_for = serializers.SerializerMethodField()
+
+    def get_looking_for(self, startup):
+        if startup.stage == Startup.Stage.COMPLETED:
+            return ["SPONSOR"]
+        return ["DEVELOPER", "MENTOR", "SPONSOR"]
+
+    def validate(self, attrs):
+        instance = self.instance
+        title = attrs.get("title", getattr(instance, "title", ""))
+        problem = attrs.get("problem", getattr(instance, "problem", ""))
+        solution = attrs.get("solution", getattr(instance, "solution", ""))
+
+        word_limits = {
+            "title": (title, 12),
+            "problem": (problem, 100),
+            "solution": (solution, 100),
+        }
+        errors = {
+            field: f"Use no more than {limit} words."
+            for field, (value, limit) in word_limits.items()
+            if len(value.split()) > limit
+        }
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
 
     class Meta:
         model = Startup
         fields = [
-            "id", "founder_username", "title", "problem",
-            "solution", "target_users", "category", "stage",
-            "budget_amount", "currency", "needs",
+            "id", "founder_username", "title", "problem", "solution",
+            "stage", "looking_for",
             "status", "created_at", "updated_at",
         ]
         read_only_fields = [
@@ -180,8 +198,25 @@ class StartupSerializer(serializers.ModelSerializer):
 
 
 class ConnectionRequestSerializer(serializers.ModelSerializer):
+    message = serializers.CharField(
+        max_length=6000,
+    )
+    interests = serializers.ListField(
+        child=serializers.ChoiceField(
+            choices=[
+                "DEVELOPMENT",
+                "MENTORSHIP",
+                "SPONSORSHIP",
+            ]
+        ),
+        allow_empty=False,
+    )
     requester_username = serializers.CharField(
         source="requester.username", read_only=True
+    )
+    founder_username = serializers.CharField(
+        source="startup.founder.username",
+        read_only=True,
     )
     startup_title = serializers.CharField(
         source="startup.title", read_only=True
@@ -191,16 +226,38 @@ class ConnectionRequestSerializer(serializers.ModelSerializer):
         model = ConnectionRequest
         fields = [
             "id", "startup", "startup_title", "requester",
-            "requester_username", "message", "status", "created_at",
+            "requester_username", "founder_username", "interests",
+            "message", "status",
+            "created_at",
         ]
         read_only_fields = [
             "id", "requester", "status", "created_at",
-            "startup_title", "requester_username",
+            "startup_title", "requester_username", "founder_username",
         ]
 
     def validate(self, attrs):
         request = self.context["request"]
         startup = attrs["startup"]
+        interests = attrs["interests"]
+        message = attrs["message"]
+
+        if len(message.split()) > 300:
+            raise serializers.ValidationError({
+                "message": "Messages must be 300 words or fewer."
+            })
+
+        if len(interests) != len(set(interests)):
+            raise serializers.ValidationError({
+                "interests": "Choose each interest only once."
+            })
+
+        if (
+            startup.stage == Startup.Stage.COMPLETED
+            and interests != ["SPONSORSHIP"]
+        ):
+            raise serializers.ValidationError({
+                "interests": "Completed startups are only accepting sponsor interest."
+            })
 
         if startup.founder_id == request.user.id:
             raise serializers.ValidationError(
@@ -224,118 +281,24 @@ class ConnectionRequestSerializer(serializers.ModelSerializer):
         return attrs
 
 
-class OfferSerializer(serializers.ModelSerializer):
-    contributor_username = serializers.CharField(
-        source="contributor.username", read_only=True
-    )
-    startup_title = serializers.CharField(
-        source="startup.title", read_only=True
+class ConnectionMessageSerializer(serializers.ModelSerializer):
+    sender_username = serializers.CharField(
+        source="sender.username",
+        read_only=True,
     )
 
     class Meta:
-        model = Offer
-        fields = [
-            "id", "startup", "startup_title", "contributor",
-            "contributor_username", "contribution_type", "funding_type",
-            "amount", "currency", "equity_percentage", "terms",
-            "status", "created_at", "updated_at",
-        ]
-        read_only_fields = [
-            "id", "contributor", "status", "created_at", "updated_at",
-            "startup_title", "contributor_username",
-        ]
+        model = ConnectionMessage
+        fields = ["id", "sender", "sender_username", "body", "created_at"]
+        read_only_fields = ["id", "sender", "sender_username", "created_at"]
 
-    def validate(self, attrs):
-        request = self.context["request"]
-        startup = attrs["startup"]
-        contribution_type = attrs["contribution_type"]
-        funding_type = attrs.get("funding_type", "")
-        amount = attrs.get("amount")
-        equity = attrs.get("equity_percentage")
-
-        if startup.founder_id == request.user.id:
+    def validate_body(self, value):
+        if len(value.split()) > 300:
             raise serializers.ValidationError(
-                "Founders cannot submit offers to their own startup."
+                "Messages must be 300 words or fewer."
             )
-
-        if startup.status != Startup.Status.OPEN:
-            raise serializers.ValidationError(
-                "This startup is not accepting offers."
-            )
-
-        has_connection = ConnectionRequest.objects.filter(
-            startup=startup,
-            requester=request.user,
-            status=ConnectionRequest.Status.ACCEPTED,
-        ).exists()
-
-        if not has_connection:
-            raise serializers.ValidationError(
-                "Your connection request must be accepted before making an offer."
-            )
-
-        if Offer.objects.filter(
-            startup=startup,
-            contributor=request.user,
-            status=Offer.Status.PROPOSED,
-        ).exists():
-            raise serializers.ValidationError(
-                "You already have a pending offer for this startup."
-            )
-
-        if contribution_type == Offer.ContributionType.FUNDING:
-            if not funding_type:
-                raise serializers.ValidationError({
-                    "funding_type": "Select grant, loan, or equity."
-                })
-            if amount is None:
-                raise serializers.ValidationError({
-                    "amount": "Funding offers require an amount."
-                })
-            if funding_type == Offer.FundingType.EQUITY and equity is None:
-                raise serializers.ValidationError({
-                    "equity_percentage": "Equity offers require a percentage."
-                })
-        else:
-            if funding_type or amount is not None or equity is not None:
-                raise serializers.ValidationError(
-                    "Only funding offers may specify funding terms or an amount."
-                )
-
-        return attrs
-
-
-class OfferResponseSerializer(serializers.Serializer):
-    decision = serializers.ChoiceField(choices=["ACCEPTED", "REJECTED"])
+        return value
 
 
 class ConnectionResponseSerializer(serializers.Serializer):
     decision = serializers.ChoiceField(choices=["ACCEPTED", "REJECTED"])
-
-
-class ProjectSerializer(serializers.ModelSerializer):
-    startup_title = serializers.CharField(
-        source="startup.title", read_only=True
-    )
-    contributor_username = serializers.CharField(
-        source="contributor.username", read_only=True
-    )
-
-    class Meta:
-        model = Project
-        fields = [
-            "id", "startup", "startup_title", "offer",
-            "founder", "contributor", "contributor_username",
-            "status", "start_date", "created_at",
-        ]
-        read_only_fields = fields
-
-
-class MilestoneSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Milestone
-        fields = [
-            "id", "project", "title", "description", "due_date",
-            "status", "completion_notes", "created_at",
-        ]
-        read_only_fields = ["id", "project", "created_at"]
