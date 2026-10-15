@@ -103,7 +103,7 @@ class Startup(UUIDModel):
         validators=[MinValueValidator(0)],
     )
     currency = models.CharField(max_length=3, default="NPR")
-    required_resources = models.JSONField(default=list, blank=True)
+    needs = models.JSONField(default=list, blank=True)
     status = models.CharField(
         max_length=12,
         choices=Status.choices,
