@@ -71,8 +71,8 @@ class Profile(UUIDModel):
 class Startup(UUIDModel):
     class Stage(models.TextChoices):
         IDEA = "IDEA", "Idea"
-        VALIDATING = "VALIDATING", "Validating"
-        MVP = "MVP", "MVP"
+        DEVELOPMENT = "DEVELOPMENT", "Development"
+        COMPLETED = "COMPLETED", "Completed"
 
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "Draft"
@@ -90,7 +90,12 @@ class Startup(UUIDModel):
     problem = models.TextField()
     solution = models.TextField()
     target_users = models.TextField(blank=True)
-    category = models.CharField(max_length=100, db_index=True)
+    category = models.CharField(
+        max_length=100,
+        db_index=True,
+        default="General",
+        blank=True,
+    )
     stage = models.CharField(
         max_length=12,
         choices=Stage.choices,
@@ -138,6 +143,7 @@ class ConnectionRequest(UUIDModel):
         related_name="sent_connection_requests",
     )
     message = models.TextField(blank=True)
+    interests = models.JSONField(default=list, blank=True)
     status = models.CharField(
         max_length=12,
         choices=Status.choices,
@@ -158,6 +164,27 @@ class ConnectionRequest(UUIDModel):
 
     def __str__(self):
         return f"{self.requester} -> {self.startup}"
+
+
+class ConnectionMessage(UUIDModel):
+    connection = models.ForeignKey(
+        ConnectionRequest,
+        on_delete=models.CASCADE,
+        related_name="messages",
+    )
+    sender = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="connection_messages",
+    )
+    body = models.TextField(max_length=6000)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-pk"]
+
+    def __str__(self):
+        return f"Message from {self.sender} in {self.connection}"
 
 
 class Offer(UUIDModel):

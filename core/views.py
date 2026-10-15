@@ -1,7 +1,5 @@
-
 from django.db import transaction
 from django.db.models import Q
-from django.shortcuts import get_object_or_404
 
 from rest_framework import generics, status, viewsets
 from rest_framework.decorators import action
@@ -14,22 +12,25 @@ from .models import (
     Profile,
     Startup,
     ConnectionRequest,
-    Offer,
-    Project,
-    Milestone,
+    ConnectionMessage,
 )
-from .permissions import IsStartupOwnerOrReadOnly, IsProjectParticipant
+from .permissions import IsStartupOwnerOrReadOnly
 from .serializers import (
     RegisterSerializer,
     ProfileSerializer,
     StartupSerializer,
     ConnectionRequestSerializer,
+    ConnectionMessageSerializer,
     ConnectionResponseSerializer,
-    OfferSerializer,
-    OfferResponseSerializer,
-    ProjectSerializer,
-    MilestoneSerializer,
 )
+
+
+def _is_country_restricted(user):
+    return (
+        user.is_authenticated
+        and hasattr(user, "profile")
+        and user.profile.role == Profile.Role.SPONSOR
+    )
 
 
 class RegisterView(generics.CreateAPIView):
@@ -49,9 +50,7 @@ class StartupViewSet(viewsets.ModelViewSet):
     serializer_class = StartupSerializer
 
     def get_permissions(self):
-        if self.action in ["list", "retrieve"]:
-            permission_classes = [AllowAny]
-        elif self.action == "interest":
+        if self.action in ["list", "retrieve", "interest"]:
             permission_classes = [IsAuthenticated]
         else:
             permission_classes = [
@@ -62,22 +61,24 @@ class StartupViewSet(viewsets.ModelViewSet):
         return [permission() for permission in permission_classes]
 
     def get_queryset(self):
-        queryset = Startup.objects.select_related("founder")
+        user = self.request.user
+        if not user.is_authenticated:
+            return Startup.objects.none()
 
-        # Public visitors see open startups.
+        queryset = Startup.objects.select_related("founder")
+        if _is_country_restricted(user):
+            # Startup country is the founder's registered country in this MVP.
+            queryset = queryset.filter(founder__country__iexact=user.country)
+
         # Logged-in founders can also see their own non-open startups.
-        if self.request.user.is_authenticated:
-            queryset = queryset.filter(
-                Q(status=Startup.Status.OPEN)
-                | Q(founder=self.request.user)
-            )
-        else:
-            queryset = queryset.filter(status=Startup.Status.OPEN)
+        queryset = queryset.filter(
+            Q(status=Startup.Status.OPEN)
+            | Q(founder=user)
+        )
 
         params = self.request.query_params
 
         search = params.get("search")
-        category = params.get("category")
         stage = params.get("stage")
 
         if search:
@@ -85,16 +86,21 @@ class StartupViewSet(viewsets.ModelViewSet):
                 Q(title__icontains=search)
                 | Q(problem__icontains=search)
                 | Q(solution__icontains=search)
-                | Q(target_users__icontains=search)
             )
-
-        if category:
-            queryset = queryset.filter(category__iexact=category)
 
         if stage:
             queryset = queryset.filter(stage=stage.upper())
 
-        return queryset
+        return queryset.order_by("-created_at", "-pk")
+
+    @action(detail=False, methods=["get"], url_path="mine")
+    def mine(self, request):
+        startups = Startup.objects.filter(founder=request.user).order_by(
+            "-created_at", "-pk"
+        )
+        page = self.paginate_queryset(startups)
+        serializer = self.get_serializer(page, many=True)
+        return self.get_paginated_response(serializer.data)
 
     def perform_create(self, serializer):
         user = self.request.user
@@ -135,12 +141,19 @@ class StartupViewSet(viewsets.ModelViewSet):
         serializer = ConnectionRequestSerializer(
             data={
                 "startup": startup.id,
+                "interests": request.data.get("interests", []),
                 "message": request.data.get("message", ""),
             },
             context={"request": request},
         )
         serializer.is_valid(raise_exception=True)
-        connection = serializer.save(requester=request.user)
+        with transaction.atomic():
+            connection = serializer.save(requester=request.user)
+            ConnectionMessage.objects.create(
+                connection=connection,
+                sender=request.user,
+                body=connection.message,
+            )
 
         return Response(
             ConnectionRequestSerializer(connection).data,
@@ -152,10 +165,22 @@ class ConnectionRequestViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return ConnectionRequest.objects.filter(
+        queryset = ConnectionRequest.objects.filter(
             Q(requester=self.request.user)
-            | Q(startup__founder=self.request.user)
-        ).select_related("startup", "requester")
+            | Q(startup__founder=self.request.user),
+        )
+        direction = self.request.query_params.get("direction")
+        if direction == "sent":
+            queryset = queryset.filter(requester=self.request.user)
+        elif direction == "received":
+            queryset = queryset.filter(startup__founder=self.request.user)
+        if _is_country_restricted(self.request.user):
+            queryset = queryset.filter(
+                startup__founder__country__iexact=self.request.user.country
+            )
+        return queryset.select_related(
+            "startup", "requester"
+        ).order_by("-created_at", "-pk")
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def respond(self, request, pk=None):
@@ -177,118 +202,29 @@ class ConnectionRequestViewSet(viewsets.ReadOnlyModelViewSet):
 
         return Response(ConnectionRequestSerializer(connection).data)
 
-
-class OfferViewSet(viewsets.ModelViewSet):
-    serializer_class = OfferSerializer
-    permission_classes = [IsAuthenticated]
-    http_method_names = ["get", "post", "head", "options"]
-
-    def get_queryset(self):
-        return Offer.objects.filter(
-            Q(contributor=self.request.user)
-            | Q(startup__founder=self.request.user)
-        ).select_related("startup", "contributor")
-
-    def perform_create(self, serializer):
-        role = self.request.user.profile.role
-        if role not in [
-            Profile.Role.SPONSOR,
-            Profile.Role.DEVELOPER,
-            Profile.Role.MENTOR,
-            Profile.Role.BOTH,
-        ]:
-            raise PermissionDenied(
-                "Your profile role cannot submit contribution offers."
-            )
-        serializer.save(contributor=self.request.user)
-
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
-    def respond(self, request, pk=None):
-        offer = self.get_object()
-
-        if offer.startup.founder_id != request.user.id:
-            raise PermissionDenied(
-                "Only the startup founder can respond to this offer."
-            )
-
-        if offer.status != Offer.Status.PROPOSED:
-            raise ValidationError("This offer has already been processed.")
-
-        serializer = OfferResponseSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        decision = serializer.validated_data["decision"]
-
-        with transaction.atomic():
-            offer.status = decision
-            offer.save(update_fields=["status", "updated_at"])
-
-            
-            if decision == Offer.Status.ACCEPTED:
-                project, created = Project.objects.get_or_create(
-                    offer=offer,
-                    defaults={
-                        "startup": offer.startup,
-                        "founder": offer.startup.founder,
-                        "contributor": offer.contributor,
-                    },
-                )
-
-                # Once an offer is accepted, close other pending offers.
-                Offer.objects.filter(
-                    startup=offer.startup,
-                    status=Offer.Status.PROPOSED,
-                ).exclude(pk=offer.pk).update(
-                    status=Offer.Status.REJECTED
-                )
-
-                offer.startup.status = Startup.Status.IN_PROGRESS
-                offer.startup.save(update_fields=["status", "updated_at"])
-
-        return Response({
-            "offer": OfferSerializer(offer).data,
-            "project_id": project.id if decision == Offer.Status.ACCEPTED else None,
-            "message": (
-                "Offer accepted and project created."
-                if decision == Offer.Status.ACCEPTED
-                else "Offer rejected."
-            ),
-        })
-
-
-class ProjectViewSet(viewsets.ReadOnlyModelViewSet):
-    serializer_class = ProjectSerializer
-    permission_classes = [IsAuthenticated]
-
-    def get_queryset(self):
-        return Project.objects.filter(
-            Q(founder=self.request.user)
-            | Q(contributor=self.request.user)
-        ).select_related("startup", "offer", "founder", "contributor")
-
     @action(detail=True, methods=["get", "post"], permission_classes=[IsAuthenticated])
-    def milestones(self, request, pk=None):
-        project = self.get_object()
+    def messages(self, request, pk=None):
+        connection = self.get_object()
+        if connection.status != ConnectionRequest.Status.ACCEPTED:
+            raise PermissionDenied(
+                "Messages are available after the founder accepts the connection."
+            )
 
         if request.method == "GET":
-            milestones = project.milestones.all()
-            return Response(MilestoneSerializer(milestones, many=True).data)
+            messages = connection.messages.select_related("sender").order_by(
+                "-created_at", "-pk"
+            )
+            page = self.paginate_queryset(messages)
+            serializer = ConnectionMessageSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
 
-        serializer = MilestoneSerializer(data=request.data)
+        serializer = ConnectionMessageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        milestone = serializer.save(project=project)
-
+        message = serializer.save(
+            connection=connection,
+            sender=request.user,
+        )
         return Response(
-            MilestoneSerializer(milestone).data,
+            ConnectionMessageSerializer(message).data,
             status=status.HTTP_201_CREATED,
         )
-
-
-class MilestoneDetailView(generics.RetrieveUpdateAPIView):
-    serializer_class = MilestoneSerializer
-    permission_classes = [IsAuthenticated]
-
-    def get_queryset(self):
-        return Milestone.objects.filter(
-            Q(project__founder=self.request.user)
-            | Q(project__contributor=self.request.user)
-        ).select_related("project")
