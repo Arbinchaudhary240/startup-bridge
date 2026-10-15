@@ -1,54 +1,103 @@
 # StartupBridge frontend
 
-React and Vite frontend for the Django REST API.
+The StartupBridge web app helps founders share startup ideas and connect with
+potential sponsors, developers, and mentors. It is built with React and Vite
+and uses the Django API in the repository root.
 
-## Run locally
+For backend setup, database configuration, and deployment settings, see the
+[backend README](../README.md).
 
-From this directory, run `npm install`, then `npm run dev`. The API defaults to
-`http://localhost:8000/api`; set `VITE_API_BASE_URL` when the API uses another
-origin. The API must use HTTPS when the website is served over HTTPS.
+## Getting started
 
-## Pages
+### Requirements
 
-- `/` — landing page and role-specific process guide
-- `/startups` — startup discovery for signed-in users; sponsors see startups in their country, other roles see all countries
-- `/startups/:startupId` — startup details and connection request
-- `/login` and `/register` — account access
-- `/dashboard` — startup listings and sent/received connection requests
-- `/profile` — edit bio, skills, and organization
-- `/startups/new` and `/startups/:startupId/edit` — publish or update a startup
-- Unknown routes show a not-found page instead of silently redirecting home
+- Node.js and npm
+- The StartupBridge API running locally, unless you are connecting to another
+  API environment
 
-Startup discovery and details require sign-in. Sponsor accounts see startups
-from their registered country, using the founder's country as the startup's
-country for this MVP. Founders, Founder-and-Sponsor accounts, developers, and
-mentors can discover startups across countries. The API enforces the sponsor
-country restriction for listings, details, and connection requests. Session
-tokens are stored for the current browser tab.
+Install dependencies and start the Vite development server:
 
-The landing hero fills at least the visible viewport below the navigation.
-Startup discovery uses server-side search and stage filters, with six startups
-per API page and Previous/Next controls. Founders publish an idea using its
-title, problem, solution, and founder-selected stage (Idea, Development, or
-Completed). Idea and Development listings welcome developers, mentors, and
-sponsors; Completed listings welcome sponsors. Connection requests include
-one or more interest types and a required note to the founder (up to 300
-words). After the founder accepts a request, both people can exchange messages
-from the workspace conversation section. StartupBridge facilitates the
-introduction; collaboration and project tracking happen outside the platform.
-Accepted-connection conversations include an optional shortcut to create a
-Google Meet and a suggested invitation message; users share the generated Meet
-link in chat themselves.
-Workspace startup listings and sent/received connections use user-scoped,
-server-paginated API filters.
+```bash
+npm install
+npm run dev
+```
 
-Startup titles are limited to 12 words, while problem and solution descriptions
-are limited to 100 words each. Discovery cards clamp the title and descriptions
-to keep their height manageable; selecting a card or its “Read full idea” link
-opens the complete startup detail page.
+By default, the frontend expects the API at `http://localhost:8000/api`. Start
+the Django backend before signing in or loading API-backed pages.
 
-List APIs return the Django REST Framework page-number format (`count`, `next`,
-`previous`, and `results`). The API defaults to 20 results per page and accepts
-`page_size` up to 100; the frontend requests six results per page. Expired
-access tokens are refreshed automatically while the tab-scoped refresh token
-remains valid (seven days).
+To use a different API origin, create a `.env.local` file in this directory:
+
+```dotenv
+VITE_API_BASE_URL=http://localhost:8000/api
+```
+
+Set this to the full API base URL, including `/api`. When serving the frontend
+over HTTPS, the API must also use HTTPS.
+
+## App pages
+
+| Path | Description |
+| --- | --- |
+| `/` | Landing page and role-specific guide |
+| `/login` | Sign in |
+| `/register` | Create an account |
+| `/startups` | Search and browse startup ideas |
+| `/startups/:startupId` | View a startup and send a connection request |
+| `/dashboard` | Manage startup listings, connection requests, and conversations |
+| `/profile` | Edit profile bio, skills, and organization |
+| `/startups/new` | Publish a startup idea |
+| `/startups/:startupId/edit` | Update one of your startup listings |
+
+Unknown paths show a not-found page. Startup discovery, details, and workspace
+pages require sign-in.
+
+## Collaboration flow
+
+1. A founder publishes an idea with its title, problem, solution, and stage.
+2. A sponsor, developer, or mentor discovers an idea and submits a connection
+   request with one or more interests and a message.
+3. The founder accepts or rejects the request from the dashboard.
+4. Once accepted, both participants can exchange messages in the dashboard
+   conversation.
+
+Idea and Development listings can receive developer, mentor, and sponsor
+interests. Completed listings accept sponsor interest only. Sponsors see
+listings and may connect only within their registered country; the MVP uses the
+founder's country as the startup's country.
+
+## Dashboard and discovery behavior
+
+- Discovery uses server-side text search and stage filters, with six startups
+  per page.
+- Dashboard ideas, sent requests, received requests, and accepted conversations
+  are shown in fixed-size, scrollable cards. Lists show newest items first.
+- Dashboard idea and request lists use server pagination and request up to 100
+  items per page.
+- Startup titles are limited to 12 words. Problem and solution descriptions
+  allow up to 100 words each. Connection messages allow up to 300 words.
+- Selecting a discovery card opens the full startup detail page.
+- An accepted conversation optionally offers a Google Meet shortcut and a
+  suggested invitation message. Participants share the Meet link in chat.
+
+StartupBridge facilitates introductions; collaboration and project tracking
+happen outside the platform.
+
+## Authentication and API
+
+The frontend communicates with the Django API using JSON and JWT bearer
+tokens. Access and refresh tokens are stored in `sessionStorage`, scoped to the
+current browser tab. Expired access tokens are refreshed automatically while
+the refresh token is valid; signing out clears the tokens from that tab.
+
+The API uses Django REST Framework page-number responses:
+`count`, `next`, `previous`, and `results`. Its default page size is 20, with a
+maximum of 100.
+
+## Development scripts
+
+```bash
+npm run dev      # Start the local development server
+npm run lint     # Run ESLint
+npm run build    # Create a production build in dist/
+npm run preview  # Preview the production build locally
+```
