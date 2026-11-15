@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 from datetime import timedelta
 from django.core.exceptions import ImproperlyConfigured
+import dj_database_url
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -21,9 +22,6 @@ load_dotenv()
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
 
 def env_bool(name, default=False):
     return os.environ.get(name, str(default)).strip().lower() in {
@@ -42,7 +40,7 @@ def env_list(name, default=""):
     ]
 
 
-DEBUG = os.environ.get('DJANGO_DEBUG', 'true').lower() in {'1', 'true', 'yes'}
+DEBUG = env_bool("DJANGO_DEBUG", True)
 
 SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY')
 if not SECRET_KEY:
@@ -84,6 +82,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -115,6 +114,16 @@ CORS_ALLOWED_ORIGINS = env_list(
     "DJANGO_CORS_ALLOWED_ORIGINS",
     "http://localhost:5173" if DEBUG else "",
 )
+if not DEBUG and not CORS_ALLOWED_ORIGINS:
+    raise ImproperlyConfigured(
+        "Set DJANGO_CORS_ALLOWED_ORIGINS to the frontend's HTTPS origin."
+    )
+if not DEBUG and any(
+    not origin.startswith("https://") for origin in CORS_ALLOWED_ORIGINS
+):
+    raise ImproperlyConfigured(
+        "DJANGO_CORS_ALLOWED_ORIGINS must contain only HTTPS origins in production."
+    )
 CORS_ALLOWED_ORIGIN_REGEXES = (
     [r"^http://(localhost|127\.0\.0\.1):(?:517[3-9]|51[89]\d)$"]
     if DEBUG
@@ -136,17 +145,6 @@ CSRF_COOKIE_SECURE = not DEBUG
 if env_bool("DJANGO_USE_X_FORWARDED_PROTO", False):
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
-if not DEBUG and not os.environ.get("DJANGO_EMAIL_HOST"):
-    raise ImproperlyConfigured(
-        "Set DJANGO_EMAIL_HOST to an SMTP server in production."
-    )
-
-MAILER_USE_SSL = env_bool("DJANGO_EMAIL_USE_SSL", False)
-MAILER_USE_TLS = env_bool("DJANGO_EMAIL_USE_TLS", not MAILER_USE_SSL)
-if MAILER_USE_SSL and MAILER_USE_TLS:
-    raise ImproperlyConfigured(
-        "Use either DJANGO_EMAIL_USE_SSL or DJANGO_EMAIL_USE_TLS, not both."
-    )
 
 ROOT_URLCONF = 'config.urls'
 
@@ -171,16 +169,34 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.getenv("DB_NAME"),
-        'USER': os.getenv("DB_USER"),
-        'PASSWORD': os.getenv("DB_PASSWORD"),
-        'HOST': os.getenv("DB_HOST", "localhost"),
-        'PORT': os.getenv("DB_PORT", "5432"),   
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DEBUG and not DATABASE_URL and not all(
+    os.environ.get(name) for name in ("DB_NAME", "DB_USER", "DB_PASSWORD")
+):
+    raise ImproperlyConfigured(
+        "Set DATABASE_URL or provide DB_NAME, DB_USER, and DB_PASSWORD."
+    )
+if DATABASE_URL:
+    DATABASES = {
+        "default": dj_database_url.parse(
+            DATABASE_URL,
+            conn_max_age=600,
+            ssl_require=not DEBUG,
+        )
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.getenv("DB_NAME"),
+            'USER': os.getenv("DB_USER"),
+            'PASSWORD': os.getenv("DB_PASSWORD"),
+            'HOST': os.getenv("DB_HOST", "localhost"),
+            'PORT': os.getenv("DB_PORT", "5432"),
+            'CONN_MAX_AGE': 600,
+            'OPTIONS': {'sslmode': 'require'} if not DEBUG else {},
+        }
+    }
 
 
 # Password validation
@@ -217,6 +233,15 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = "/static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
