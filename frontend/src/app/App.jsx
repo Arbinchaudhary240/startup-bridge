@@ -1,5 +1,6 @@
 
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { SpeedInsights } from '@vercel/speed-insights/react'
 import { AuthProvider } from '../context/AuthContext.jsx'
 import AuthRoute from './AuthRoute'
 import HomePage from '../pages/homePage.jsx'
@@ -41,6 +42,7 @@ export default function App() {
           <Route path="/startups/:startupId/edit" element={<ProtectedLayout><StartupFormPage /></ProtectedLayout>} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
+        <SpeedInsights />
       </BrowserRouter>
     </AuthProvider>
   )
