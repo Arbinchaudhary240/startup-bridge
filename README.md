@@ -119,6 +119,44 @@ Before deployment, also run:
 python manage.py check --deploy
 ```
 
+## Deployment
+
+The repository includes a Render Blueprint in `render.yaml` for the Django API
+and a Vercel SPA rewrite in `frontend/vercel.json` for React Router deep links.
+Deploy the backend and frontend separately, and use a managed PostgreSQL
+database for `DATABASE_URL` (for example, a hosted PostgreSQL provider).
+
+### Django API on Render
+
+1. Create a managed PostgreSQL database and copy its private connection URL.
+2. Deploy this repository as a Render Blueprint. The service builds static
+   files with WhiteNoise and runs database migrations before starting Gunicorn.
+3. In the API service's environment, set `DATABASE_URL` to the database URL
+   and `DJANGO_CORS_ALLOWED_ORIGINS` to the exact HTTPS origin of the frontend
+   (for example, `https://your-app.vercel.app`, with no trailing slash).
+4. Confirm `DJANGO_ALLOWED_HOSTS` matches the API hostname. The Blueprint
+   defaults to `startupbridge-api.onrender.com`; update it if the service or
+   custom domain uses another hostname.
+
+The Blueprint generates `DJANGO_SECRET_KEY` and enables production security
+settings. Do not reuse the development key or commit deployment secrets.
+
+### React frontend on Vercel
+
+1. Import the repository and set the Vercel project's **Root Directory** to
+   `frontend`.
+2. Use `npm run build` as the build command and `dist` as the output directory.
+3. Set `VITE_API_BASE_URL` to the complete HTTPS API URL ending in `/api`,
+   such as `https://startupbridge-api.onrender.com/api`.
+4. Redeploy after setting environment variables. The Vercel rewrite serves the
+   SPA for nested routes such as `/dashboard` and `/startups/<id>`.
+
+The Vite `VITE_*` setting is embedded into the public frontend build; never put
+secrets in it. Free hosting plans can sleep or impose quotas, so they are
+appropriate for a demo/MVP but not a reliability guarantee for production
+traffic. Set up database backups and test restore before accepting important
+user data.
+
 ## Deployment configuration
 
 Set deployment configuration in the hosting environment or a protected
@@ -129,16 +167,17 @@ environment file. Production settings require:
 | `DJANGO_DEBUG` | Set to `false` in production |
 | `DJANGO_SECRET_KEY` | Unique secret key for the deployment |
 | `DJANGO_ALLOWED_HOSTS` | Comma-separated API hostnames |
-| `DJANGO_EMAIL_HOST` | Required by the current production settings |
-| `DB_NAME` | PostgreSQL database name |
-| `DB_USER` | PostgreSQL user |
-| `DB_PASSWORD` | PostgreSQL password |
+| `DJANGO_CORS_ALLOWED_ORIGINS` | Comma-separated HTTPS frontend origins |
+| `DATABASE_URL` | PostgreSQL connection URL; SSL is required when `DEBUG` is false |
+| `DB_NAME` | PostgreSQL database name when `DATABASE_URL` is not used |
+| `DB_USER` | PostgreSQL user when `DATABASE_URL` is not used |
+| `DB_PASSWORD` | PostgreSQL password when `DATABASE_URL` is not used |
 
 Other supported settings:
 
 | Variable | Purpose |
 | --- | --- |
-| `DB_HOST`, `DB_PORT` | Database host and port; default to `localhost` and `5432` |
+| `DB_HOST`, `DB_PORT` | Database host and port when `DATABASE_URL` is not used; default to `localhost` and `5432` |
 | `DJANGO_CORS_ALLOWED_ORIGINS` | Comma-separated frontend origins |
 | `DJANGO_CSRF_TRUSTED_ORIGINS` | Comma-separated trusted origins for CSRF-protected pages |
 | `DJANGO_USE_X_FORWARDED_PROTO` | Trust a sanitized `X-Forwarded-Proto` header from a trusted proxy |
@@ -146,11 +185,11 @@ Other supported settings:
 | `DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS` | Enable HSTS for all subdomains; opt in only when appropriate |
 | `DJANGO_SECURE_HSTS_PRELOAD` | Enable HSTS preload; opt in only when domain requirements are met |
 
-The current settings require `DJANGO_EMAIL_HOST` in production and validate
-that `DJANGO_EMAIL_USE_TLS` and `DJANGO_EMAIL_USE_SSL` are not both enabled.
-Configure Django's `EMAIL_*` settings separately if the deployment needs to
-send email; these environment variables alone do not configure an SMTP
-backend.
+Email uses Django's console backend unless `DJANGO_EMAIL_HOST` is set. To send
+email, configure `DJANGO_EMAIL_HOST`, `DJANGO_EMAIL_PORT`,
+`DJANGO_EMAIL_USER`, `DJANGO_EMAIL_PASSWORD`, `DJANGO_EMAIL_USE_TLS` or
+`DJANGO_EMAIL_USE_SSL`, and optionally `DJANGO_DEFAULT_FROM_EMAIL`. TLS and SSL
+cannot both be enabled.
 
 Generate a production secret with:
 
